@@ -113,13 +113,15 @@ fn mpf_intel_compute_checksum(v: &mpspec::mpf_intel) -> u8 {
     (!checksum).wrapping_add(1)
 }
 
+const NUM_IOAPIC_PINS: usize = 24;
+
 fn compute_mp_size(num_cpus: u8) -> usize {
     mem::size_of::<MpfIntelWrapper>()
         + mem::size_of::<MpcTableWrapper>()
         + mem::size_of::<MpcCpuWrapper>() * (num_cpus as usize)
         + mem::size_of::<MpcIoapicWrapper>()
         + mem::size_of::<MpcBusWrapper>()
-        + mem::size_of::<MpcIntsrcWrapper>() * 16
+        + mem::size_of::<MpcIntsrcWrapper>() * NUM_IOAPIC_PINS
         + mem::size_of::<MpcLintsrcWrapper>() * 2
 }
 
@@ -215,7 +217,7 @@ pub fn setup_mptable(mem: &GuestMemoryMmap, num_cpus: u8) -> Result<()> {
         checksum = checksum.wrapping_add(compute_checksum(&mpc_ioapic.0));
     }
     // Per kvm_setup_default_irq_routing() in kernel
-    for i in 0..16 {
+    for i in 0..NUM_IOAPIC_PINS as u8 {
         let size = mem::size_of::<MpcIntsrcWrapper>() as u64;
         let mut mpc_intsrc = MpcIntsrcWrapper(mpspec::mpc_intsrc::default());
         mpc_intsrc.0.type_ = mpspec::MP_INTSRC as u8;

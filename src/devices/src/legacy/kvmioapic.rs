@@ -7,9 +7,15 @@ use crate::Error as DeviceError;
 use crate::bus::BusDevice;
 use crate::legacy::irqchip::IrqChipT;
 
-use kvm_bindings::{KVM_PIT_SPEAKER_DUMMY, kvm_pit_config};
+use kvm_bindings::{
+    KVM_IRQ_ROUTING_IRQCHIP, KVM_IRQCHIP_IOAPIC, KVM_IRQCHIP_PIC_MASTER, KVM_IRQCHIP_PIC_SLAVE,
+    KVM_PIT_SPEAKER_DUMMY, KvmIrqRouting, kvm_irq_routing_entry,
+    kvm_irq_routing_entry__bindgen_ty_1, kvm_irq_routing_irqchip, kvm_pit_config,
+};
 use kvm_ioctls::{Error, VmFd};
 use utils::eventfd::EventFd;
+
+const IOAPIC_NUM_PINS: u32 = 24;
 
 pub struct KvmIoapic {}
 
@@ -24,7 +30,61 @@ impl KvmIoapic {
         };
         vm.create_pit2(pit_config)?;
 
+        Self::setup_irq_routing(vm)?;
+
         Ok(Self {})
+    }
+
+    fn setup_irq_routing(vm: &VmFd) -> Result<(), Error> {
+        let mut entries: Vec<kvm_irq_routing_entry> = Vec::new();
+
+        for gsi in 0..IOAPIC_NUM_PINS {
+            entries.push(kvm_irq_routing_entry {
+                gsi,
+                type_: KVM_IRQ_ROUTING_IRQCHIP,
+                flags: 0,
+                u: kvm_irq_routing_entry__bindgen_ty_1 {
+                    irqchip: kvm_irq_routing_irqchip {
+                        irqchip: KVM_IRQCHIP_IOAPIC,
+                        pin: gsi,
+                    },
+                },
+                ..Default::default()
+            });
+
+            if gsi < 8 {
+                entries.push(kvm_irq_routing_entry {
+                    gsi,
+                    type_: KVM_IRQ_ROUTING_IRQCHIP,
+                    flags: 0,
+                    u: kvm_irq_routing_entry__bindgen_ty_1 {
+                        irqchip: kvm_irq_routing_irqchip {
+                            irqchip: KVM_IRQCHIP_PIC_MASTER,
+                            pin: gsi,
+                        },
+                    },
+                    ..Default::default()
+                });
+            } else if gsi < 16 {
+                entries.push(kvm_irq_routing_entry {
+                    gsi,
+                    type_: KVM_IRQ_ROUTING_IRQCHIP,
+                    flags: 0,
+                    u: kvm_irq_routing_entry__bindgen_ty_1 {
+                        irqchip: kvm_irq_routing_irqchip {
+                            irqchip: KVM_IRQCHIP_PIC_SLAVE,
+                            pin: gsi - 8,
+                        },
+                    },
+                    ..Default::default()
+                });
+            }
+        }
+
+        let mut routing =
+            KvmIrqRouting::new(entries.len()).map_err(|_| kvm_ioctls::Error::new(libc::ENOMEM))?;
+        routing.as_mut_slice().copy_from_slice(&entries);
+        vm.set_gsi_routing(&routing)
     }
 }
 
