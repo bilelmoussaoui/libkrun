@@ -9,7 +9,6 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::{fmt, io};
 
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
 use devices::fdt::DeviceInfoForFDT;
 #[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
 use devices::legacy::IrqChip;
@@ -167,27 +166,6 @@ impl MMIODeviceManager {
         Ok(ret)
     }
 
-    /// Append a registered MMIO device to the kernel cmdline.
-    #[cfg(target_arch = "x86_64")]
-    pub fn add_device_to_cmdline(
-        &mut self,
-        cmdline: &mut kernel_cmdline::Cmdline,
-        mmio_base: u64,
-        irq: u32,
-    ) -> Result<()> {
-        // as per doc, [virtio_mmio.]device=<size>@<baseaddr>:<irq> needs to be appended
-        // to kernel commandline for virtio mmio devices to get recognized
-        // the size parameter has to be transformed to KiB, so dividing hexadecimal value in
-        // bytes to 1024; further, the '{}' formatting rust construct will automatically
-        // transform it to decimal
-        cmdline
-            .insert(
-                "virtio_mmio.device",
-                &format!("{}K@0x{:08x}:{}", MMIO_LEN / 1024, mmio_base, irq),
-            )
-            .map_err(Error::Cmdline)
-    }
-
     #[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
     /// Register an early console at some MMIO address.
     pub fn register_mmio_serial(
@@ -273,7 +251,6 @@ impl MMIODeviceManager {
         Ok(())
     }
 
-    #[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
     /// Gets the information of the devices registered up to some point in time.
     pub fn get_device_info(&self) -> &HashMap<(DeviceType, String), MMIODeviceInfo> {
         &self.id_to_dev_info
@@ -304,7 +281,6 @@ pub struct MMIODeviceInfo {
     _len: u64,
 }
 
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
 impl DeviceInfoForFDT for MMIODeviceInfo {
     fn addr(&self) -> u64 {
         self.addr
@@ -351,8 +327,6 @@ mod tests {
                     .unwrap();
             let (mmio_base, _irq) =
                 self.register_mmio_device(vm, mmio_device, type_id, device_id.to_string())?;
-            #[cfg(target_arch = "x86_64")]
-            self.add_device_to_cmdline(_cmdline, mmio_base, _irq)?;
             Ok(mmio_base)
         }
     }

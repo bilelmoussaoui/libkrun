@@ -56,6 +56,7 @@ use arch::{ArchMemoryInfo, InitrdConfig};
 use crossbeam_channel::Sender;
 #[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
 use devices::fdt;
+use devices::fdt::DeviceInfoForFDT;
 use devices::legacy::IrqChip;
 use devices::virtio::VmmExitObserver;
 use devices::{BusDevice, DeviceType};
@@ -367,6 +368,14 @@ impl Vmm {
                 self.kernel_cmdline.len() + 1
             };
 
+            let mut device_info: Vec<(u64, u32, u64)> = self
+                .mmio_device_manager
+                .get_device_info()
+                .values()
+                .map(|info| (info.addr(), info.irq(), info.length()))
+                .collect();
+            device_info.sort_by_key(|&(addr, _, _)| addr);
+
             arch::x86_64::configure_system(
                 &self.guest_memory,
                 &self.arch_memory_info,
@@ -375,6 +384,7 @@ impl Vmm {
                 initrd,
                 vcpus.len() as u8,
                 _pvh,
+                &device_info,
             )
             .map_err(Error::ConfigureSystem)?;
         }

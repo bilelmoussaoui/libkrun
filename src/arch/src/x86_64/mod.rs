@@ -5,6 +5,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the THIRD-PARTY file.
 
+#[cfg(not(feature = "tee"))]
+mod acpi;
 mod gdt;
 /// Contains logic for setting up Advanced Programmable Interrupt Controller (local version).
 pub mod interrupts;
@@ -60,6 +62,9 @@ unsafe impl ByteValued for BootParamsWrapper {}
 pub enum Error {
     /// Invalid e820 setup params.
     E820Configuration,
+    /// Error writing ACPI tables to memory.
+    #[cfg(not(feature = "tee"))]
+    AcpiTableSetup(acpi::Error),
     /// Error writing MP table to memory.
     #[cfg(any(not(feature = "tee"), feature = "tdx"))]
     MpTableSetup(mptable::Error),
@@ -291,7 +296,7 @@ pub fn setup_mptable_for_tdshim(guest_mem: &GuestMemoryMmap, num_cpus: u8) -> su
 /// * `initrd` - Information about where the ramdisk image was loaded in the `guest_mem`.
 /// * `num_cpus` - Number of virtual CPUs the guest will have.
 /// * `pvh` - Whether to use the PVH boot protocol.
-#[allow(unused_variables)]
+#[allow(unused_variables, clippy::too_many_arguments)]
 pub fn configure_system(
     guest_mem: &GuestMemoryMmap,
     arch_memory_info: &ArchMemoryInfo,
@@ -300,10 +305,14 @@ pub fn configure_system(
     initrd: &Option<InitrdConfig>,
     num_cpus: u8,
     pvh: bool,
+    devices: &[(u64, u32, u64)],
 ) -> super::Result<()> {
     // Note that this puts the mptable at the last 1k of Linux's 640k base RAM
     #[cfg(not(feature = "tee"))]
     mptable::setup_mptable(guest_mem, num_cpus).map_err(Error::MpTableSetup)?;
+
+    #[cfg(not(feature = "tee"))]
+    acpi::setup_acpi_tables(guest_mem, num_cpus, devices).map_err(Error::AcpiTableSetup)?;
 
     if pvh {
         #[cfg(all(not(feature = "tee"), target_os = "linux"))]
@@ -582,7 +591,7 @@ mod tests {
         let no_vcpus = 4;
         let gm = GuestMemoryMmap::from_ranges(&[(GuestAddress(0), 0x10000)]).unwrap();
         let info = ArchMemoryInfo::default();
-        let config_err = configure_system(&gm, &info, GuestAddress(0), 0, &None, 1, false);
+        let config_err = configure_system(&gm, &info, GuestAddress(0), 0, &None, 1, false, &[]);
         assert!(config_err.is_err());
         #[cfg(not(feature = "tee"))]
         assert_eq!(
@@ -603,6 +612,7 @@ mod tests {
             &None,
             no_vcpus,
             false,
+            &[],
         )
         .unwrap();
 
@@ -619,6 +629,7 @@ mod tests {
             &None,
             no_vcpus,
             false,
+            &[],
         )
         .unwrap();
 
@@ -635,6 +646,7 @@ mod tests {
             &None,
             no_vcpus,
             false,
+            &[],
         )
         .unwrap();
     }
