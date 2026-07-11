@@ -142,7 +142,7 @@ impl Worker {
                     flags: 0,
                 };
 
-                virtio_gpu.resource_create_3d(resource_id, resource_create_3d)
+                virtio_gpu.resource_create_3d(0, resource_id, resource_create_3d)
             }
             GpuCommand::ResourceUnref(info) => virtio_gpu.unref_resource(info.resource_id),
             GpuCommand::SetScanout(info) => virtio_gpu.set_scanout(
@@ -200,8 +200,7 @@ impl Worker {
                 panic!("virtio_gpu: GpuCommand::MoveCursor unimplemented");
             }
             GpuCommand::ResourceAssignUuid(info) => {
-                let resource_id = info.resource_id;
-                virtio_gpu.resource_assign_uuid(resource_id)
+                virtio_gpu.resource_assign_uuid(info.resource_id)
             }
             GpuCommand::GetCapsetInfo(info) => virtio_gpu.get_capset_info(info.capset_index),
             GpuCommand::GetCapset(info) => {
@@ -234,7 +233,7 @@ impl Worker {
                     flags: info.flags,
                 };
 
-                virtio_gpu.resource_create_3d(resource_id, resource_create_3d)
+                virtio_gpu.resource_create_3d(hdr.ctx_id, resource_id, resource_create_3d)
             }
             GpuCommand::TransferToHost3d(info) => {
                 let ctx_id = hdr.ctx_id;
@@ -337,17 +336,18 @@ impl Worker {
                     mem,
                 )
             }
-            GpuCommand::SetScanoutBlob(_info) => {
-                panic!("virtio_gpu: GpuCommand::SetScanoutBlob unimplemented");
-            }
+            GpuCommand::SetScanoutBlob(info) => virtio_gpu.set_scanout_blob(
+                info.scanout_id,
+                info.resource_id,
+                info.width,
+                info.height,
+                info.format,
+            ),
             GpuCommand::ResourceMapBlob(info) => {
-                let resource_id = info.resource_id;
-                let offset = info.offset;
-                virtio_gpu.resource_map_blob(resource_id, &self.shm_region, offset)
+                virtio_gpu.resource_map_blob(info.resource_id, &self.shm_region, info.offset)
             }
             GpuCommand::ResourceUnmapBlob(info) => {
-                let resource_id = info.resource_id;
-                virtio_gpu.resource_unmap_blob(resource_id, &self.shm_region)
+                virtio_gpu.resource_unmap_blob(info.resource_id, &self.shm_region)
             }
         }
     }
