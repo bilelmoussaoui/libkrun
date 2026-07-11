@@ -147,6 +147,7 @@ impl AssociatedScanouts {
 #[derive(Copy, Clone)]
 struct VirtioGpuResource {
     id: u32,
+    ctx_id: u32,
     width: u32,
     height: u32,
     scanouts: AssociatedScanouts,
@@ -161,6 +162,7 @@ impl VirtioGpuResource {
     /// display, while size is useful for hypervisor mapping.
     pub fn new(
         resource_id: u32,
+        ctx_id: u32,
         width: u32,
         height: u32,
         format: Option<ResourceFormat>,
@@ -168,6 +170,7 @@ impl VirtioGpuResource {
     ) -> VirtioGpuResource {
         VirtioGpuResource {
             id: resource_id,
+            ctx_id,
             width,
             height,
             scanouts: Default::default(),
@@ -423,6 +426,7 @@ impl VirtioGpu {
     /// Creates a 3D resource with the given properties and resource_id.
     pub fn resource_create_3d(
         &mut self,
+        ctx_id: u32,
         resource_id: u32,
         resource_create_3d: ResourceCreate3D,
     ) -> VirtioGpuResult {
@@ -439,6 +443,7 @@ impl VirtioGpu {
 
         let resource = VirtioGpuResource::new(
             resource_id,
+            ctx_id,
             resource_create_3d.width,
             resource_create_3d.height,
             format,
@@ -512,7 +517,10 @@ impl VirtioGpu {
         resource.scanouts.enable(scanout_id);
 
         let Some(format) = resource.format else {
-            warn!("Cannot use resource {resource_id} with unknown format for scanout");
+            error!(
+                "set_scanout: resource {resource_id} has no format (w={} h={} size={})",
+                resource.width, resource.height, resource.size
+            );
             return Err(ErrUnspec);
         };
 
@@ -538,10 +546,75 @@ impl VirtioGpu {
         Ok(OkNoData)
     }
 
+    pub fn set_scanout_blob(
+        &mut self,
+        scanout_id: u32,
+        resource_id: u32,
+        width: u32,
+        height: u32,
+        format: u32,
+    ) -> VirtioGpuResult {
+        let scanout = self
+            .scanouts
+            .get_mut(scanout_id as usize)
+            .ok_or(ErrInvalidScanoutId)?;
+
+        if let Some(resource_id) = scanout.as_ref().map(|scanout| scanout.resource_id) {
+            let resource = self
+                .resources
+                .get_mut(&resource_id)
+                .ok_or(ErrInvalidResourceId)?;
+            resource.scanouts.disable(scanout_id);
+        }
+
+        if resource_id == 0 {
+            *scanout = None;
+            self.display_backend.disable_scanout(scanout_id)?;
+            return Ok(OkNoData);
+        }
+
+        let resource = self
+            .resources
+            .get_mut(&resource_id)
+            .ok_or(ErrInvalidResourceId)?;
+        resource.scanouts.enable(scanout_id);
+
+        let fmt = ResourceFormat::try_from(format).map_err(|_| {
+            log::warn!("set_scanout_blob: unsupported format {format}");
+            ErrUnspec
+        })?;
+
+        resource.width = width;
+        resource.height = height;
+        resource.format = Some(fmt);
+
+        let display_info = self
+            .displays
+            .get(scanout_id as usize)
+            .ok_or(ErrInvalidScanoutId)?;
+
+        self.display_backend.configure_scanout(
+            scanout_id,
+            display_info.width,
+            display_info.height,
+            width,
+            height,
+            fmt,
+        )?;
+
+        *scanout = Some(VirtioGpuScanout {
+            resource_id,
+            width,
+            height,
+        });
+        Ok(OkNoData)
+    }
+
     // The resource can be larger than the scanout, but the frame only holds
     // the scanout.
     fn read_2d_resource(
         rutabaga: &mut Rutabaga,
+        ctx_id: u32,
         resource: VirtioGpuResource,
         scanout: &VirtioGpuScanout,
         output: &mut [u8],
@@ -559,7 +632,7 @@ impl VirtioGpu {
             offset: 0,
         };
 
-        rutabaga.transfer_read(0, resource.id, transfer, Some(IoSliceMut::new(output)))
+        rutabaga.transfer_read(ctx_id, resource.id, transfer, Some(IoSliceMut::new(output)))
     }
 
     /// If the resource is the scanout resource, flush it to the display.
@@ -573,19 +646,29 @@ impl VirtioGpu {
             .get(&resource_id)
             .ok_or(ErrInvalidResourceId)?;
 
+        if !resource.scanouts.has_any_enabled() {
+            return Ok(OkNoData);
+        }
+
         for scanout_id in resource.scanouts.iter_enabled() {
             let Some(Some(scanout)) = self.scanouts.get(scanout_id as usize) else {
                 continue;
             };
             let (frame_id, buffer) = self.display_backend.alloc_frame(scanout_id)?;
-            let read = Self::read_2d_resource(&mut self.rutabaga, resource, scanout, buffer);
+            let read = Self::read_2d_resource(
+                &mut self.rutabaga,
+                resource.ctx_id,
+                resource,
+                scanout,
+                buffer,
+            );
             // Present the frame even if the read failed: the display API has no
             // way to release it, and a backend may not hand out another one.
             self.display_backend
                 .present_frame(scanout_id, frame_id, Some(&rect))?;
             if let Err(e) = read {
                 log::error!("Failed to read resource {resource_id} for scanout {scanout_id}: {e}");
-                return Err(ErrUnspec);
+                continue;
             }
         }
 
@@ -719,6 +802,11 @@ impl VirtioGpu {
     /// Attaches a resource to a rutabaga context.
     pub fn context_attach_resource(&mut self, ctx_id: u32, resource_id: u32) -> VirtioGpuResult {
         self.rutabaga.context_attach_resource(ctx_id, resource_id)?;
+        if ctx_id != 0 {
+            if let Some(resource) = self.resources.get_mut(&resource_id) {
+                resource.ctx_id = ctx_id;
+            }
+        }
         Ok(OkNoData)
     }
 
@@ -796,7 +884,8 @@ impl VirtioGpu {
             None,
         )?;
 
-        let resource = VirtioGpuResource::new(resource_id, 0, 0, None, resource_create_blob.size);
+        let resource =
+            VirtioGpuResource::new(resource_id, ctx_id, 0, 0, None, resource_create_blob.size);
 
         // Rely on rutabaga to check for duplicate resource ids.
         self.resources.insert(resource_id, resource);
