@@ -24,9 +24,7 @@ use imago::{
 };
 use log::{error, warn};
 use utils::eventfd::{EFD_NONBLOCK, EventFd};
-use virtio_bindings::{
-    virtio_blk::*, virtio_config::VIRTIO_F_VERSION_1, virtio_ring::VIRTIO_RING_F_EVENT_IDX,
-};
+use virtio_bindings::{virtio_blk::*, virtio_config::VIRTIO_F_VERSION_1};
 use vm_memory::{ByteValued, GuestMemoryMmap};
 
 #[cfg(target_os = "windows")]
@@ -324,8 +322,7 @@ impl Block {
         let mut avail_features = (1u64 << VIRTIO_F_VERSION_1)
             | (1u64 << VIRTIO_BLK_F_SEG_MAX)
             | (1u64 << VIRTIO_BLK_F_DISCARD)
-            | (1u64 << VIRTIO_BLK_F_WRITE_ZEROES)
-            | (1u64 << VIRTIO_RING_F_EVENT_IDX);
+            | (1u64 << VIRTIO_BLK_F_WRITE_ZEROES);
 
         if sync_mode != SyncMode::None {
             avail_features |= 1u64 << VIRTIO_BLK_F_FLUSH;
