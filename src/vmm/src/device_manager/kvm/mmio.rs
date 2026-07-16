@@ -143,8 +143,8 @@ impl MMIODeviceManager {
                 .map_err(Error::RegisterIoEvent)?;
         }
 
-        vm.register_irqfd(mmio_device.interrupt_evt(), self.irq)
-            .map_err(Error::RegisterIrqFd)?;
+        // irqfd registration omitted: interrupt delivery uses KVM_SIGNAL_MSI
+        // directly in KvmIoapic::set_irq, bypassing the async irqfd path.
 
         mmio_device.set_irq_line(self.irq);
 
