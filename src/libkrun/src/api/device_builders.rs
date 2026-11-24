@@ -913,14 +913,38 @@ impl<'a> ConsoleBuilder<'a> {
     }
 
     /// Add a port with separate borrowed input and output fds (no terminal
-    /// properties). The caller retains responsibility for the descriptors.
-    /// Pass `None` to disable that direction.
+    /// properties). The guest sees it as a data port (`/dev/vportNpM`). The
+    /// caller retains responsibility for the descriptors. Pass `None` to
+    /// disable that direction.
     #[cfg(unix)]
     pub fn add_inout_port(
         &mut self,
         name: &str,
         input_fd: Option<BorrowedFd<'a>>,
         output_fd: Option<BorrowedFd<'a>>,
+    ) -> Result<u32, VmmError> {
+        self.add_inout_port_inner(name, input_fd, output_fd, false)
+    }
+
+    /// Like [`add_inout_port`](Self::add_inout_port), but the port is exposed to
+    /// the guest as a console (`/dev/hvcN`) instead of a data port.
+    #[cfg(unix)]
+    pub fn add_console_port(
+        &mut self,
+        name: &str,
+        input_fd: Option<BorrowedFd<'a>>,
+        output_fd: Option<BorrowedFd<'a>>,
+    ) -> Result<u32, VmmError> {
+        self.add_inout_port_inner(name, input_fd, output_fd, true)
+    }
+
+    #[cfg(unix)]
+    fn add_inout_port_inner(
+        &mut self,
+        name: &str,
+        input_fd: Option<BorrowedFd<'a>>,
+        output_fd: Option<BorrowedFd<'a>>,
+        console: bool,
     ) -> Result<u32, VmmError> {
         let index = self.ports.len() as u32;
         let input = input_fd
@@ -944,6 +968,7 @@ impl<'a> ConsoleBuilder<'a> {
             input,
             output,
             terminal: None,
+            console,
         });
         Ok(index)
     }
@@ -1046,6 +1071,7 @@ impl<'a> ConsoleBuilder<'a> {
             input: console_input,
             output: console_output,
             terminal,
+            console: false,
         });
 
         // Named redirect ports for non-terminal fds
@@ -1102,6 +1128,7 @@ impl<'a> ConsoleBuilder<'a> {
             input,
             output,
             terminal: None,
+            console: false,
         });
         Ok(index)
     }
@@ -1183,6 +1210,7 @@ impl<'a> ConsoleBuilder<'a> {
             input: console_input,
             output: console_output,
             terminal,
+            console: false,
         });
 
         // Named redirect ports for non-terminal fds
@@ -1214,22 +1242,7 @@ impl<'a> ConsoleBuilder<'a> {
             input: None,
             output: Some(output),
             terminal: None,
-        });
-        index
-    }
-
-    /// Add an output-only console port with fake terminal properties.
-    pub fn add_console_port(
-        &mut self,
-        name: &str,
-        output: Box<dyn devices::virtio::port_io::PortOutput + Send>,
-    ) -> u32 {
-        let index = self.ports.len() as u32;
-        self.ports.push(PortDescription {
-            name: name.to_string().into(),
-            input: None,
-            output: Some(output),
-            terminal: Some(port_io::term_fixed_size(80, 24)),
+            console: false,
         });
         index
     }
@@ -1273,6 +1286,7 @@ impl<'a> ConsoleBuilder<'a> {
             input,
             output,
             terminal,
+            console: false,
         });
         Ok(())
     }
@@ -1321,6 +1335,7 @@ impl<'a> ConsoleBuilder<'a> {
             input,
             output,
             terminal,
+            console: false,
         });
         Ok(())
     }
